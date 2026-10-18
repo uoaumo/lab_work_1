@@ -14,7 +14,7 @@ namespace limits_config {
     constexpr int kMinStationClass = 1;
     constexpr int kMaxStationClass = 5;
 }  // namespace limits_config
-
+ 
 struct Pipe {
     std::string name;       // километровая отметка (название)
     double lengthKm = 0.0;  // длина, км

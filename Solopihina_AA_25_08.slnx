@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="Solopihina_AA_25_08/Solopihina_AA_25_08.vcxproj" />
+</Solution>

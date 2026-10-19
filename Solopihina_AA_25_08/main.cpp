@@ -81,6 +81,70 @@ bool readYesNo(const std::string& prompt) {
     }
 }
 
+Pipe readPipeFromConsole() {
+    Pipe pipe;
+    pipe.name = readName("Pipe name (km mark): ");
+    pipe.lengthKm = readNumberInRange("Length, km: ", limits_config::kMinPipeLengthKm,
+        limits_config::kMaxPipeLengthKm);
+    pipe.diameterMm = readNumberInRange("Diameter, mm: ", 1, limits_config::kMaxPipeDiameterMm);
+    return pipe;
+}
+
+void printPipe(const Pipe& pipe) {
+    std::cout << "Pipe:\n"
+        << "  Name:         " << pipe.name << '\n'
+        << "  Length, km:   " << pipe.lengthKm << '\n'
+        << "  Diameter, mm: " << pipe.diameterMm << '\n'
+        << "  Under repair: " << (pipe.underRepair ? "yes" : "no") << '\n';
+}
+
+void editPipeRepairFlag(Pipe& pipe) {
+    pipe.underRepair = readYesNo("Is the pipe under repair?");
+    std::cout << "Repair flag updated.\n";
+}
+
+CompressorStation readStationFromConsole() {
+    CompressorStation station;
+    station.name = readName("Station name: ");
+    station.workshopCount = readNumberInRange("Total workshops: ", 1, limits_config::kMaxWorkshops);
+    station.workshopsRunning = readNumberInRange("Workshops running: ", 0, station.workshopCount);
+    station.stationClass = readNumberInRange("Station class: ", limits_config::kMinStationClass,
+        limits_config::kMaxStationClass);
+    return station;
+}
+
+void printStation(const CompressorStation& station) {
+    std::cout << "Compressor station:\n"
+        << "  Name:              " << station.name << '\n'
+        << "  Total workshops:   " << station.workshopCount << '\n'
+        << "  Running workshops: " << station.workshopsRunning << '\n'
+        << "  Station class:     " << station.stationClass << '\n';
+}
+
+bool startWorkshop(CompressorStation& station) {
+    if (station.workshopsRunning >= station.workshopCount) return false;
+    ++station.workshopsRunning;
+    return true;
+}
+
+bool stopWorkshop(CompressorStation& station) {
+    if (station.workshopsRunning <= 0) return false;
+    --station.workshopsRunning;
+    return true;
+}
+
+void editStationWorkshops(CompressorStation& station) {
+    const int action = readNumberInRange("1. Start workshop\n2. Stop workshop\n0. Cancel\n> ", 0, 2);
+    if (action == 0) return;
+    const bool done = (action == 1) ? startWorkshop(station) : stopWorkshop(station);
+    if (done)
+        std::cout << "Done. Running: " << station.workshopsRunning << '/'
+        << station.workshopCount << '\n';
+    else
+        std::cout << (action == 1 ? "Error: all workshops are already running.\n"
+            : "Error: no running workshops to stop.\n");
+}
+
 int main() {
     return 0;
 }

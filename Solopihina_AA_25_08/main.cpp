@@ -1,7 +1,8 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
-#include <optional>
+#include <iomanip>
+#include <sstream>
 #include <string>
 
 namespace limits_config {
@@ -47,8 +48,8 @@ bool isValidStation(const CompressorStation& station) {
 
 struct InputClosedError {};
 
-// Читает число в диапазоне [minValue, maxValue].
-// Некорректный ввод приводит к повторному запросу.
+// Читает число в диапазоне [minValue, maxValue]
+// Некорректный ввод приводит к повторному запросу
 template <typename Number>
 Number readNumberInRange(const std::string& prompt, Number minValue, Number maxValue) {
     while (true) {
@@ -145,9 +146,11 @@ void editStationWorkshops(CompressorStation& station) {
             : "Error: no running workshops to stop.\n");
 }
 
-struct PipelineState {
-    std::optional<Pipe> pipe;
-    std::optional<CompressorStation> station;
+struct AppState {
+    Pipe pipe;
+    CompressorStation station;
+    bool hasPipe = false;
+    bool hasStation = false;
 };
 
 void printMenu() {
@@ -156,101 +159,143 @@ void printMenu() {
         "4. Edit pipe\n5. Edit compressor station\n6. Save\n7. Load\n0. Exit\n";
 }
 
-void handleAddPipe(PipelineState& state) {
-    if (state.pipe && !readYesNo("A pipe already exists. Replace it?")) return;
+void handleAddPipe(AppState& state) {
+    if (state.hasPipe && !readYesNo("A pipe already exists. Replace it?")) return;
     state.pipe = readPipeFromConsole();
+    state.hasPipe = true;
     std::cout << "Pipe added.\n";
 }
 
-void handleAddStation(PipelineState& state) {
-    if (state.station && !readYesNo("A station already exists. Replace it?")) return;
+void handleAddStation(AppState& state) {
+    if (state.hasStation && !readYesNo("A station already exists. Replace it?")) return;
     state.station = readStationFromConsole();
+    state.hasStation = true;
     std::cout << "Station added.\n";
 }
 
-void handleViewAll(const PipelineState& state) {
-    if (state.pipe) printPipe(*state.pipe);
+void handleViewAll(const AppState& state) {
+    if (state.hasPipe) printPipe(state.pipe);
     else std::cout << "No pipe.\n";
-    if (state.station) printStation(*state.station);
+    if (state.hasStation) printStation(state.station);
     else std::cout << "No compressor station.\n";
 }
 
-void handleEditPipe(PipelineState& state) {
-    if (!state.pipe) { std::cout << "Error: there is no pipe. Add one first.\n"; return; }
-    editPipeRepairFlag(*state.pipe);
+void handleEditPipe(AppState& state) {
+    if (!state.hasPipe) { std::cout << "Error: there is no pipe. Add one first.\n"; return; }
+    editPipeRepairFlag(state.pipe);
 }
 
-void handleEditStation(PipelineState& state) {
-    if (!state.station) { std::cout << "Error: there is no compressor station. Add one first.\n"; return; }
-    editStationWorkshops(*state.station);
+void handleEditStation(AppState& state) {
+    if (!state.hasStation) { std::cout << "Error: there is no compressor station. Add one first.\n"; return; }
+    editStationWorkshops(state.station);
 }
 
-const std::string kFileHeader = "PIPELINE_DATA_V1";
 const std::string kDefaultFileName = "data.txt";
 
-void writePipe(std::ostream& out, const Pipe& pipe) {
-    out << pipe.name << '\n' << pipe.lengthKm << ' ' << pipe.diameterMm << ' '
-        << pipe.underRepair << '\n';
+bool fileExists(const std::string& fileName) {
+    std::ifstream file(fileName);
+    return file.is_open();
 }
 
-std::optional<Pipe> readPipeFromStream(std::istream& in) {
-    Pipe pipe;
-    if (!std::getline(in >> std::ws, pipe.name)) return std::nullopt;
-    if (!(in >> pipe.lengthKm >> pipe.diameterMm >> pipe.underRepair)) return std::nullopt;
-    if (!isValidPipe(pipe)) return std::nullopt;
-    return pipe;
+// Читает строку вида "ключ: значение" и возвращает значение
+bool readStringField(std::istream& in, const std::string& key, std::string& value) {
+    std::string line;
+    const std::string prefix = key + ": ";
+    if (!std::getline(in, line) || line.compare(0, prefix.size(), prefix) != 0) return false;
+    value = line.substr(prefix.size());
+    return true;
 }
 
-void writeStation(std::ostream& out, const CompressorStation& station) {
-    out << station.name << '\n' << station.workshopCount << ' '
-        << station.workshopsRunning << ' ' << station.stationClass << '\n';
+// То же для числа, лишние символы после числа это ошибка
+template <typename Number>
+bool readNumberField(std::istream& in, const std::string& key, Number& value) {
+    std::string text;
+    if (!readStringField(in, key, text)) return false;
+    std::istringstream stream(text);
+    return (stream >> value) && (stream >> std::ws).eof();
 }
 
-std::optional<CompressorStation> readStationFromStream(std::istream& in) {
-    CompressorStation station;
-    if (!std::getline(in >> std::ws, station.name)) return std::nullopt;
-    if (!(in >> station.workshopCount >> station.workshopsRunning >> station.stationClass))
-        return std::nullopt;
-    if (!isValidStation(station)) return std::nullopt;
-    return station;
-}
-
-bool saveState(const PipelineState& state, const std::string& fileName) {
-    std::ofstream out(fileName);
-    if (!out) return false;
-    out << kFileHeader << '\n';
-    if (state.pipe) { out << "PIPE\n"; writePipe(out, *state.pipe); }
-    else out << "NOPIPE\n";
-    if (state.station) { out << "STATION\n"; writeStation(out, *state.station); }
-    else out << "NOSTATION\n";
+bool savePipe(std::ostream& out, const Pipe& pipe) {
+    out << "pipe\n" << std::setprecision(15)
+        << "name: " << pipe.name << '\n'
+        << "length: " << pipe.lengthKm << '\n'
+        << "diameter: " << pipe.diameterMm << '\n'
+        << "repair: " << (pipe.underRepair ? 1 : 0) << '\n';
     return static_cast<bool>(out);
 }
 
-// Данные читаются во временный объект: при ошибке текущее состояние не меняется.
-std::optional<PipelineState> loadState(const std::string& fileName) {
+// Вызывается после того, как строка "pipe" уже прочитана
+bool loadPipe(std::istream& in, Pipe& pipe) {
+    Pipe loaded;
+    int repairFlag = 0;
+    if (!readStringField(in, "name", loaded.name) ||
+        !readNumberField(in, "length", loaded.lengthKm) ||
+        !readNumberField(in, "diameter", loaded.diameterMm) ||
+        !readNumberField(in, "repair", repairFlag)) {
+        return false;
+    }
+    if (repairFlag != 0 && repairFlag != 1) return false;
+    loaded.underRepair = (repairFlag == 1);
+    if (!isValidPipe(loaded)) return false;
+    pipe = loaded;
+    return true;
+}
+
+bool saveCompressorStation(std::ostream& out, const CompressorStation& station) {
+    out << "station\n"
+        << "name: " << station.name << '\n'
+        << "workshops: " << station.workshopCount << '\n'
+        << "running: " << station.workshopsRunning << '\n'
+        << "class: " << station.stationClass << '\n';
+    return static_cast<bool>(out);
+}
+
+// Вызывается после того, как строка "station" уже прочитана
+bool loadCompressorStation(std::istream& in, CompressorStation& station) {
+    CompressorStation loaded;
+    if (!readStringField(in, "name", loaded.name) ||
+        !readNumberField(in, "workshops", loaded.workshopCount) ||
+        !readNumberField(in, "running", loaded.workshopsRunning) ||
+        !readNumberField(in, "class", loaded.stationClass)) {
+        return false;
+    }
+    if (!isValidStation(loaded)) return false;
+    station = loaded;
+    return true;
+}
+
+bool saveToFile(const std::string& fileName, const AppState& state) {
+    std::ofstream out(fileName);  // файл создается, если его нет
+    if (!out) return false;
+    if (state.hasPipe && !savePipe(out, state.pipe)) return false;
+    if (state.hasStation && !saveCompressorStation(out, state.station)) return false;
+    out.close();
+    return !out.fail();
+}
+
+// Читает во временный AppState и при любой ошибке текущее состояние не меняется
+// Пустой файл допустим
+bool loadFromFile(const std::string& fileName, AppState& state) {
     std::ifstream in(fileName);
-    std::string header, marker;
-    if (!(in >> header) || header != kFileHeader) return std::nullopt;
+    if (!in) return false;
 
-    PipelineState loaded;
-    if (!(in >> marker)) return std::nullopt;
-    if (marker == "PIPE") {
-        loaded.pipe = readPipeFromStream(in);
-        if (!loaded.pipe) return std::nullopt;
+    AppState loaded;
+    std::string section;
+    while (std::getline(in, section)) {
+        if (section == "pipe" && !loaded.hasPipe) {
+            if (!loadPipe(in, loaded.pipe)) return false;
+            loaded.hasPipe = true;
+        }
+        else if (section == "station" && !loaded.hasStation) {
+            if (!loadCompressorStation(in, loaded.station)) return false;
+            loaded.hasStation = true;
+        }
+        else {
+            return false;  // неизвестный или повторный раздел
+        }
     }
-    else if (marker != "NOPIPE") {
-        return std::nullopt;
-    }
-
-    if (!(in >> marker)) return std::nullopt;
-    if (marker == "STATION") {
-        loaded.station = readStationFromStream(in);
-        if (!loaded.station) return std::nullopt;
-    }
-    else if (marker != "NOSTATION") {
-        return std::nullopt;
-    }
-    return loaded;
+    state = loaded;
+    return true;
 }
 
 std::string readFileName() {
@@ -260,26 +305,31 @@ std::string readFileName() {
     return name.empty() ? kDefaultFileName : name;
 }
 
-void handleSave(const PipelineState& state) {
+void handleSave(const AppState& state) {
     const std::string fileName = readFileName();
-    if (saveState(state, fileName)) std::cout << "Saved to '" << fileName << "'.\n";
-    else std::cout << "Error: could not write file '" << fileName << "'.\n";
-}
-
-void handleLoad(PipelineState& state) {
-    const std::string fileName = readFileName();
-    auto loaded = loadState(fileName);
-    if (!loaded) {
-        std::cout << "Error: could not read '" << fileName
-            << "' (missing or invalid data). Current data is unchanged.\n";
+    if (!fileExists(fileName) &&
+        !readYesNo("File '" + fileName + "' does not exist. Create it?")) {
         return;
     }
-    state = *loaded;
-    std::cout << "Loaded from '" << fileName << "'.\n";
+    if (saveToFile(fileName, state)) std::cout << "Saved to '" << fileName << "'.\n";
+    else std::cout << "Could not save '" << fileName << "'.\n";
+}
+
+void handleLoad(AppState& state) {
+    const std::string fileName = readFileName();
+    if (!fileExists(fileName)) {
+        std::cout << "File '" << fileName << "' not found.\n";
+    }
+    else if (loadFromFile(fileName, state)) {
+        std::cout << "Loaded from '" << fileName << "'.\n";
+    }
+    else {
+        std::cout << "File '" << fileName << "' has invalid data. Current data is unchanged.\n";
+    }
 }
 
 int main() {
-    PipelineState state;
+    AppState state;
     try {
         while (true) {
             printMenu();

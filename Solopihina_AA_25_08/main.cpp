@@ -4,6 +4,8 @@
 #include <sstream>
 #include <string>
 
+const std::string kFileName = "data.txt";
+
 const double kMinLengthKm = 0.001;
 const double kMaxLengthKm = 100000.0;
 const int kMaxDiameterMm = 5000;
@@ -26,26 +28,6 @@ struct CompressorStation
     int activeShops = 0;
     int stationClass = 0;
 };
-
-bool isValidName(const std::string &name) { return !name.empty(); }
-
-bool isValidPipe(const Pipe &pipe)
-{
-    return isValidName(pipe.name) &&
-           pipe.length >= kMinLengthKm &&
-           pipe.length <= kMaxLengthKm &&
-           pipe.diameter > 0 && pipe.diameter <= kMaxDiameterMm;
-}
-
-bool isValidStation(const CompressorStation &station)
-{
-    return isValidName(station.name) && station.totalShops > 0 &&
-           station.totalShops <= kMaxShops &&
-           station.activeShops >= 0 &&
-           station.activeShops <= station.totalShops &&
-           station.stationClass >= kMinClass &&
-           station.stationClass <= kMaxClass;
-}
 
 struct InputClosedError
 {
@@ -145,6 +127,7 @@ Pipe readPipe()
     pipe.name = readNonEmptyString("Pipe name (km mark): ");
     pipe.length = readDouble("Length, km: ", kMinLengthKm, kMaxLengthKm);
     pipe.diameter = readInt("Diameter, mm: ", 1, kMaxDiameterMm);
+    pipe.underRepair = readYesNo("Is the pipe under repair?");
     return pipe;
 }
 
@@ -182,34 +165,39 @@ void printStation(const CompressorStation &station)
               << "  Station class:     " << station.stationClass << '\n';
 }
 
-bool startShop(CompressorStation &station)
+void startShop(CompressorStation &station)
 {
     if (station.activeShops >= station.totalShops)
-        return false;
+    {
+        std::cout << "Error: all workshops are already running.\n";
+        return;
+    }
     ++station.activeShops;
-    return true;
+    std::cout << "Workshop started.\n";
 }
 
-bool stopShop(CompressorStation &station)
+void stopShop(CompressorStation &station)
 {
     if (station.activeShops <= 0)
-        return false;
+    {
+        std::cout << "Error: no running workshops to stop.\n";
+        return;
+    }
     --station.activeShops;
-    return true;
+    std::cout << "Workshop stopped.\n";
 }
 
 void editStation(CompressorStation &station)
 {
-    const int action = readInt("1. Start workshop\n2. Stop workshop\n0. Cancel\n> ", 0, 2);
-    if (action == 0)
-        return;
-    const bool done = (action == 1) ? startShop(station) : stopShop(station);
-    if (done)
-        std::cout << "Done. Running: " << station.activeShops << '/'
-                  << station.totalShops << '\n';
+    int choice = readInt("1 - start workshop, 2 - stop workshop: ", 1, 2);
+    if (choice == 1)
+    {
+        startShop(station);
+    }
     else
-        std::cout << (action == 1 ? "Error: all workshops are already running.\n"
-                                  : "Error: no running workshops to stop.\n");
+    {
+        stopShop(station);
+    }
 }
 
 struct AppState
@@ -229,8 +217,6 @@ void printMenu()
 
 void handleAddPipe(AppState &state)
 {
-    if (state.hasPipe && !readYesNo("A pipe already exists. Replace it?"))
-        return;
     state.pipe = readPipe();
     state.hasPipe = true;
     std::cout << "Pipe added.\n";
@@ -238,15 +224,17 @@ void handleAddPipe(AppState &state)
 
 void handleAddStation(AppState &state)
 {
-    if (state.hasStation && !readYesNo("A station already exists. Replace it?"))
-        return;
     state.station = readStation();
     state.hasStation = true;
     std::cout << "Station added.\n";
 }
 
-void handleViewAll(const AppState& state)
+void handleViewAll(const AppState &state)
 {
+    if (!state.hasPipe && !state.hasStation)
+    {
+        std::cout << "No objects.\n";
+    }
     if (state.hasPipe)
     {
         printPipe(state.pipe);
@@ -277,123 +265,106 @@ void handleEditStation(AppState &state)
     editStation(state.station);
 }
 
-const std::string kDefaultFileName = "data.txt";
-
-bool fileExists(const std::string &fileName)
+void savePipe(std::ofstream &file, const Pipe &pipe)
 {
-    std::ifstream file(fileName);
-    return file.is_open();
+    file << "PIPE\n"
+         << pipe.name << "\n"
+         << pipe.length << " " << pipe.diameter << " " << pipe.underRepair << "\n";
 }
 
-bool savePipe(std::ofstream& file, const Pipe& pipe)
-{
-    file << "pipe\n"
-         << std::setprecision(15) << pipe.name << '\n'
-         << pipe.length << ' ' << pipe.diameter << ' '
-         << pipe.underRepair << '\n';
-
-    return file.good();
-}
-
-bool loadPipe(std::ifstream& file, Pipe& pipe)
+bool loadPipe(std::ifstream &file, Pipe &pipe)
 {
     Pipe loaded;
     std::string numbers;
-    int repair;
+    int repair = 0;
 
-    if (!std::getline(file, loaded.name) ||
-        !std::getline(file, numbers))
+    if (!std::getline(file, loaded.name) || !std::getline(file, numbers))
     {
         return false;
     }
-
     std::istringstream stream(numbers);
-
     if (!(stream >> loaded.length >> loaded.diameter >> repair))
     {
         return false;
     }
-
     stream >> std::ws;
-
     if (!stream.eof() || (repair != 0 && repair != 1))
     {
         return false;
     }
-
     loaded.underRepair = (repair == 1);
 
-    if (!isValidPipe(loaded))
+    bool valid = loaded.name.find_first_not_of(" \t") != std::string::npos &&
+                 loaded.length >= kMinLengthKm && loaded.length <= kMaxLengthKm &&
+                 loaded.diameter >= 1 && loaded.diameter <= kMaxDiameterMm;
+    if (!valid)
     {
         return false;
     }
-
     pipe = loaded;
     return true;
 }
 
-bool saveStation(std::ofstream& file, const CompressorStation& station)
+void saveStation(std::ofstream &file, const CompressorStation &station)
 {
-    file << "station\n"
-         << station.name << '\n'
-         << station.totalShops << ' '
-         << station.activeShops << ' '
-         << station.stationClass << '\n';
-
-    return file.good();
+    file << "STATION\n"
+         << station.name << "\n"
+         << station.totalShops << " " << station.activeShops << " "
+         << station.stationClass << "\n";
 }
 
-bool loadStation(std::ifstream& file, CompressorStation& station)
+bool loadStation(std::ifstream &file, CompressorStation &station)
 {
     CompressorStation loaded;
     std::string numbers;
 
-    if (!std::getline(file, loaded.name) ||
-        !std::getline(file, numbers))
+    if (!std::getline(file, loaded.name) || !std::getline(file, numbers))
     {
         return false;
     }
-
     std::istringstream stream(numbers);
-
-    if (!(stream >> loaded.totalShops
-                >> loaded.activeShops
-                >> loaded.stationClass))
+    if (!(stream >> loaded.totalShops >> loaded.activeShops >> loaded.stationClass))
     {
         return false;
     }
-
     stream >> std::ws;
-
-    if (!stream.eof() || !isValidStation(loaded))
+    if (!stream.eof())
     {
         return false;
     }
 
+    bool valid = loaded.name.find_first_not_of(" \t") != std::string::npos &&
+                 loaded.totalShops >= 1 && loaded.totalShops <= kMaxShops &&
+                 loaded.activeShops >= 0 && loaded.activeShops <= loaded.totalShops &&
+                 loaded.stationClass >= kMinClass && loaded.stationClass <= kMaxClass;
+    if (!valid)
+    {
+        return false;
+    }
     station = loaded;
     return true;
 }
 
-bool saveToFile(const std::string& fileName, const AppState& state)
+bool saveToFile(const std::string &fileName, const AppState &state)
 {
     std::ofstream file(fileName);
     if (!file)
     {
         return false;
     }
-    if (state.hasPipe && !savePipe(file, state.pipe))
+    file << std::setprecision(10);
+    if (state.hasPipe)
     {
-        return false;
+        savePipe(file, state.pipe);
     }
-    if (state.hasStation && !saveStation(file, state.station))
+    if (state.hasStation)
     {
-        return false;
+        saveStation(file, state.station);
     }
-    file.close();
-    return !file.fail();
+    return file.good();
 }
 
-bool loadFromFile(const std::string& fileName, AppState& state)
+bool loadFromFile(const std::string &fileName, AppState &state)
 {
     std::ifstream file(fileName);
     if (!file)
@@ -401,10 +372,10 @@ bool loadFromFile(const std::string& fileName, AppState& state)
         return false;
     }
     AppState loaded;
-    std::string section;
-    while (std::getline(file, section))
+    std::string header;
+    while (std::getline(file, header))
     {
-        if (section == "pipe" && !loaded.hasPipe)
+        if (header == "PIPE" && !loaded.hasPipe)
         {
             if (!loadPipe(file, loaded.pipe))
             {
@@ -412,7 +383,7 @@ bool loadFromFile(const std::string& fileName, AppState& state)
             }
             loaded.hasPipe = true;
         }
-        else if (section == "station" && !loaded.hasStation)
+        else if (header == "STATION" && !loaded.hasStation)
         {
             if (!loadStation(file, loaded.station))
             {
@@ -425,7 +396,7 @@ bool loadFromFile(const std::string& fileName, AppState& state)
             return false;
         }
     }
-    if (file.bad())
+    if (!loaded.hasPipe && !loaded.hasStation)
     {
         return false;
     }
@@ -433,43 +404,32 @@ bool loadFromFile(const std::string& fileName, AppState& state)
     return true;
 }
 
-std::string readFileName()
-{
-    std::cout << "File name (empty = " << kDefaultFileName << "): ";
-    std::string name;
-    if (!std::getline(std::cin, name))
-        throw InputClosedError();
-    return name.empty() ? kDefaultFileName : name;
-}
-
 void handleSave(const AppState &state)
 {
-    const std::string fileName = readFileName();
-    if (!fileExists(fileName) &&
-        !readYesNo("File '" + fileName + "' does not exist. Create it?"))
+    if (!state.hasPipe && !state.hasStation)
     {
+        std::cout << "Nothing to save.\n";
         return;
     }
-    if (saveToFile(fileName, state))
-        std::cout << "Saved to '" << fileName << "'.\n";
+    if (saveToFile(kFileName, state))
+    {
+        std::cout << "Saved to " << kFileName << "\n";
+    }
     else
-        std::cout << "Could not save '" << fileName << "'.\n";
+    {
+        std::cout << "Error: could not write to " << kFileName << "\n";
+    }
 }
 
 void handleLoad(AppState &state)
 {
-    const std::string fileName = readFileName();
-    if (!fileExists(fileName))
+    if (loadFromFile(kFileName, state))
     {
-        std::cout << "File '" << fileName << "' not found.\n";
-    }
-    else if (loadFromFile(fileName, state))
-    {
-        std::cout << "Loaded from '" << fileName << "'.\n";
+        std::cout << "Loaded from " << kFileName << "\n";
     }
     else
     {
-        std::cout << "File '" << fileName << "' has invalid data. Current data is unchanged.\n";
+        std::cout << "Error: file is missing or corrupted. Current data is unchanged.\n";
     }
 }
 
